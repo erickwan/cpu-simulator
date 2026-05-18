@@ -997,8 +997,6 @@ async function stepInternal() {
   setPhase('execute');
   await executeInstruction(ins);
 
-  cpu.ir = null;
-  document.getElementById('control-value').textContent = 'idle';
   clearBuses();
   clearComps();
   clearPhase();
