@@ -1,0 +1,1353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CPU Inside-Out · An Interactive Simulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Major+Mono+Display&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #0b0d12;
+    --bg-soft:   #11141c;
+    --panel:     #161a24;
+    --panel-2:   #1d2230;
+    --line:      #2a3142;
+    --line-soft: #1f2535;
+    --text:      #d6dde6;
+    --dim:       #6b7488;
+    --amber:     #ffb454;
+    --amber-glow:#ffb45499;
+    --green:     #7cf3a0;
+    --green-glow:#7cf3a099;
+    --cyan:      #65d6e0;
+    --magenta:   #ff7ab6;
+    --red:       #ff6b6b;
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
+    --display: 'Major Mono Display', monospace;
+    --sans: 'DM Sans', system-ui, sans-serif;
+  }
+
+  *,*::before,*::after { box-sizing: border-box; }
+  html,body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    background-image:
+      radial-gradient(ellipse at top, #14182300 0%, #0b0d12 70%),
+      repeating-linear-gradient(0deg, transparent 0px, transparent 3px, rgba(255,255,255,0.012) 3px, rgba(255,255,255,0.012) 4px);
+    overflow-x: hidden;
+  }
+
+  /* ---------- HEADER ---------- */
+  header {
+    border-bottom: 1px solid var(--line);
+    padding: 18px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    background: linear-gradient(180deg, #0d1018 0%, #0b0d12 100%);
+  }
+  .logo {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+  }
+  .logo h1 {
+    font-family: var(--display);
+    font-size: 22px;
+    margin: 0;
+    color: var(--amber);
+    text-shadow: 0 0 14px var(--amber-glow);
+    letter-spacing: 2px;
+  }
+  .logo .sub {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 3px;
+  }
+
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .btn {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 8px 14px;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    transition: all 0.15s ease;
+    border-radius: 2px;
+  }
+  .btn:hover {
+    background: #252b3d;
+    border-color: #3a4258;
+  }
+  .btn.primary {
+    background: var(--amber);
+    color: #1a1408;
+    border-color: var(--amber);
+    box-shadow: 0 0 18px var(--amber-glow);
+  }
+  .btn.primary:hover { background: #ffc170; }
+  .btn.green {
+    background: var(--green);
+    color: #0a1a10;
+    border-color: var(--green);
+    box-shadow: 0 0 14px var(--green-glow);
+  }
+  .btn.green:hover { background: #95f5b3; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .speed {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--dim);
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  input[type="range"] {
+    accent-color: var(--amber);
+    width: 100px;
+  }
+
+  /* ---------- MAIN LAYOUT ---------- */
+  main {
+    display: grid;
+    grid-template-columns: 360px 1fr 280px;
+    gap: 14px;
+    padding: 14px;
+    min-height: calc(100vh - 60px);
+  }
+  @media (max-width: 1200px) {
+    main { grid-template-columns: 1fr; }
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .panel-head {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    background: var(--bg-soft);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .panel-head .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--amber);
+    box-shadow: 0 0 8px var(--amber-glow);
+    display: inline-block;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+
+  /* ---------- CODE EDITOR ---------- */
+  .editor-wrap {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  select.examples {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 6px 10px;
+    margin: 10px;
+    border-radius: 2px;
+    cursor: pointer;
+  }
+  .code-editor {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    min-height: 260px;
+  }
+  .code-editor textarea {
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.65;
+    border: none;
+    outline: none;
+    resize: none;
+    padding: 10px 14px 10px 50px;
+    white-space: pre;
+    tab-size: 4;
+    caret-color: var(--amber);
+  }
+  .line-numbers {
+    position: absolute;
+    top: 0; left: 0; bottom: 0;
+    width: 40px;
+    padding: 10px 0;
+    text-align: right;
+    color: var(--dim);
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.65;
+    user-select: none;
+    border-right: 1px solid var(--line-soft);
+    background: var(--bg-soft);
+  }
+  .line-numbers .ln { padding-right: 8px; }
+  .line-numbers .ln.current {
+    background: linear-gradient(90deg, var(--amber-glow) 0%, transparent 100%);
+    color: var(--amber);
+    font-weight: 700;
+  }
+
+  /* ---------- EXPLANATION LOG ---------- */
+  .log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.7;
+    min-height: 180px;
+    max-height: 280px;
+  }
+  .log .entry {
+    margin-bottom: 8px;
+    padding-left: 12px;
+    border-left: 2px solid var(--line);
+    animation: fadeIn 0.3s ease;
+  }
+  .log .entry.fetch   { border-color: var(--cyan);    color: var(--cyan); }
+  .log .entry.decode  { border-color: var(--magenta); color: var(--magenta); }
+  .log .entry.execute { border-color: var(--amber);   color: var(--amber); }
+  .log .entry.write   { border-color: var(--green);   color: var(--green); }
+  .log .entry.info    { border-color: var(--dim);     color: var(--dim); }
+  .log .entry.error   { border-color: var(--red);     color: var(--red); }
+  .log .entry .tag {
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    font-size: 10px;
+    margin-right: 6px;
+  }
+  .log .entry .body { color: var(--text); }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateX(-4px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+
+  /* ---------- CPU DIAGRAM ---------- */
+  .cpu-diagram {
+    flex: 1;
+    padding: 18px;
+    position: relative;
+    min-height: 600px;
+    display: flex;
+    flex-direction: column;
+  }
+  .phase-indicator {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 14px;
+    justify-content: center;
+  }
+  .phase-pill {
+    padding: 6px 14px;
+    border: 1px solid var(--line);
+    border-radius: 30px;
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--dim);
+    transition: all 0.25s ease;
+  }
+  .phase-pill.active {
+    background: var(--amber);
+    color: #1a1408;
+    border-color: var(--amber);
+    box-shadow: 0 0 18px var(--amber-glow);
+    transform: scale(1.04);
+  }
+
+  #cpuSvg {
+    width: 100%;
+    flex: 1;
+    min-height: 540px;
+    display: block;
+  }
+
+  /* SVG component styles */
+  .comp-box {
+    fill: var(--panel-2);
+    stroke: var(--line);
+    stroke-width: 1.5;
+    transition: all 0.2s ease;
+  }
+  .comp-box.active {
+    fill: #2a2010;
+    stroke: var(--amber);
+    stroke-width: 2.5;
+    filter: drop-shadow(0 0 10px var(--amber-glow));
+  }
+  .comp-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    fill: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    font-weight: 700;
+  }
+  .comp-box.active + .comp-label,
+  .comp-box.active ~ .comp-label { fill: var(--amber); }
+
+  .comp-value {
+    font-family: var(--mono);
+    font-size: 13px;
+    fill: var(--text);
+    font-weight: 500;
+  }
+  .comp-value.glow { fill: var(--amber); }
+  .comp-value.glow-green { fill: var(--green); }
+
+  .bus {
+    stroke: var(--line);
+    stroke-width: 1.5;
+    fill: none;
+  }
+  .bus.active {
+    stroke: var(--green);
+    stroke-width: 2.5;
+    filter: drop-shadow(0 0 6px var(--green-glow));
+    animation: dash 0.6s linear infinite;
+  }
+  .bus.control.active { stroke: var(--magenta); filter: drop-shadow(0 0 6px #ff7ab699); }
+  .bus.address.active { stroke: var(--cyan);    filter: drop-shadow(0 0 6px #65d6e099); }
+
+  @keyframes dash { to { stroke-dashoffset: -16; } }
+
+  .bus-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    fill: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+  }
+
+  /* ---------- RIGHT COLUMN ---------- */
+  .state-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--line);
+    border-top: 1px solid var(--line);
+  }
+  .reg-cell {
+    background: var(--panel);
+    padding: 10px 12px;
+    font-family: var(--mono);
+  }
+  .reg-cell .label {
+    font-size: 9px;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+  }
+  .reg-cell .value {
+    font-size: 16px;
+    color: var(--text);
+    font-weight: 700;
+    margin-top: 2px;
+    transition: color 0.2s ease;
+  }
+  .reg-cell.changed .value {
+    color: var(--green);
+    text-shadow: 0 0 8px var(--green-glow);
+  }
+
+  .memory {
+    padding: 10px;
+    overflow-y: auto;
+    max-height: 360px;
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .mem-row {
+    display: grid;
+    grid-template-columns: 50px 1fr;
+    gap: 10px;
+    padding: 3px 8px;
+    border-radius: 2px;
+    transition: all 0.2s ease;
+  }
+  .mem-row.active {
+    background: rgba(255, 180, 84, 0.15);
+    color: var(--amber);
+  }
+  .mem-row.pc-here {
+    background: rgba(101, 214, 224, 0.12);
+    color: var(--cyan);
+  }
+  .mem-row .addr { color: var(--dim); }
+  .mem-row .val  { color: var(--text); }
+
+  .output-box {
+    background: #060708;
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    margin: 10px;
+    padding: 12px;
+    font-family: var(--mono);
+    font-size: 14px;
+    color: var(--green);
+    text-shadow: 0 0 8px var(--green-glow);
+    min-height: 80px;
+    max-height: 140px;
+    overflow-y: auto;
+    line-height: 1.7;
+  }
+  .output-box::before {
+    content: "▸ OUTPUT";
+    display: block;
+    font-size: 9px;
+    color: var(--dim);
+    letter-spacing: 2px;
+    margin-bottom: 6px;
+    text-shadow: none;
+  }
+  .output-line { animation: fadeIn 0.3s ease; }
+
+  /* ---------- INSTRUCTION REFERENCE ---------- */
+  .ref {
+    padding: 12px 14px;
+    font-size: 11px;
+    line-height: 1.7;
+    color: var(--dim);
+    font-family: var(--mono);
+  }
+  .ref strong { color: var(--amber); font-weight: 700; }
+  .ref .row { display: grid; grid-template-columns: 110px 1fr; gap: 8px; padding: 2px 0; }
+  .ref .row code { color: var(--cyan); }
+
+  /* ---------- SCROLLBARS ---------- */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: var(--bg-soft); }
+  ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a4258; }
+
+  /* CRT flicker */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background: linear-gradient(180deg, transparent 50%, rgba(0,0,0,0.04) 50%);
+    background-size: 100% 4px;
+    pointer-events: none;
+    z-index: 100;
+    opacity: 0.5;
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--cyan);
+    letter-spacing: 1px;
+  }
+
+  .footer-note {
+    text-align: center;
+    padding: 14px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--dim);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    border-top: 1px solid var(--line);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <h1>cpu inside-out</h1>
+    <span class="sub">/ a hands-on simulator</span>
+  </div>
+  <div class="controls">
+    <span class="badge" id="cycleBadge">Cycle 0</span>
+    <button class="btn" id="resetBtn">⟲ Reset</button>
+    <button class="btn primary" id="stepBtn">▸ Step</button>
+    <button class="btn green" id="runBtn">▶ Run</button>
+    <div class="speed">
+      <span>Speed</span>
+      <input type="range" min="1" max="10" value="5" id="speedSlider">
+    </div>
+  </div>
+</header>
+
+<main>
+  <!-- LEFT COLUMN -->
+  <div style="display:flex; flex-direction:column; gap:14px; min-height:0;">
+    <div class="panel" style="flex: 1; min-height: 360px;">
+      <div class="panel-head"><span><span class="dot"></span>Assembly Program</span> <span style="font-size:9px;">edit me!</span></div>
+      <div class="editor-wrap">
+        <select class="examples" id="exampleSelect">
+          <option value="add">▸ Simple addition (3 + 4)</option>
+          <option value="count">▸ Count from 1 to 5</option>
+          <option value="multiply">▸ Multiply 6 × 4 (via loop)</option>
+          <option value="max">▸ Find max of two numbers</option>
+          <option value="factorial">▸ Factorial of 5</option>
+          <option value="fib">▸ Fibonacci sequence</option>
+        </select>
+        <div class="code-editor">
+          <div class="line-numbers" id="lineNumbers"></div>
+          <textarea id="codeArea" spellcheck="false"></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="panel" style="min-height: 220px;">
+      <div class="panel-head"><span><span class="dot"></span>Execution Log</span> <span id="logHint" style="font-size:9px;">plain english explanation</span></div>
+      <div class="log" id="log"></div>
+    </div>
+  </div>
+
+  <!-- CENTER: CPU DIAGRAM -->
+  <div class="panel">
+    <div class="panel-head"><span><span class="dot"></span>Inside the CPU</span> <span style="font-size:9px;">watch the data flow</span></div>
+    <div class="cpu-diagram">
+      <div class="phase-indicator">
+        <div class="phase-pill" data-phase="fetch">① Fetch</div>
+        <div class="phase-pill" data-phase="decode">② Decode</div>
+        <div class="phase-pill" data-phase="execute">③ Execute</div>
+        <div class="phase-pill" data-phase="write">④ Writeback</div>
+      </div>
+
+      <svg id="cpuSvg" viewBox="0 0 760 600" xmlns="http://www.w3.org/2000/svg">
+        <!-- MEMORY (left side) -->
+        <g id="g-memory">
+          <rect class="comp-box" x="20" y="60" width="140" height="480" rx="3"/>
+          <text class="comp-label" x="90" y="48" text-anchor="middle">Memory</text>
+        </g>
+
+        <!-- DATA BUS from Memory to CPU -->
+        <path id="bus-mem-cpu" class="bus" d="M 160 300 L 220 300" />
+        <text class="bus-label" x="180" y="290" text-anchor="middle">data bus</text>
+
+        <!-- ADDRESS BUS from CPU to Memory -->
+        <path id="bus-cpu-mem" class="bus address" d="M 220 340 L 160 340" />
+        <text class="bus-label" x="180" y="358" text-anchor="middle">addr bus</text>
+
+        <!-- CPU OUTER BOX -->
+        <rect x="220" y="30" width="520" height="540" rx="6" 
+              fill="none" stroke="var(--line)" stroke-width="1" stroke-dasharray="4 4"/>
+        <text class="comp-label" x="480" y="22" text-anchor="middle" style="font-size:10px; fill: var(--dim);">— CPU —</text>
+
+        <!-- PROGRAM COUNTER -->
+        <g id="g-pc">
+          <rect class="comp-box" x="250" y="60" width="130" height="60" rx="3"/>
+          <text class="comp-label" x="315" y="80" text-anchor="middle">Program Counter</text>
+          <text class="comp-value glow" x="315" y="105" text-anchor="middle" id="pc-value">0</text>
+        </g>
+
+        <!-- INSTRUCTION REGISTER -->
+        <g id="g-ir">
+          <rect class="comp-box" x="430" y="60" width="170" height="60" rx="3"/>
+          <text class="comp-label" x="515" y="80" text-anchor="middle">Instruction Register</text>
+          <text class="comp-value glow" x="515" y="105" text-anchor="middle" id="ir-value">—</text>
+        </g>
+
+        <!-- PC → IR bus -->
+        <path id="bus-pc-ir" class="bus address" d="M 380 90 L 430 90" />
+
+        <!-- CONTROL UNIT -->
+        <g id="g-control">
+          <rect class="comp-box" x="320" y="170" width="220" height="80" rx="3"/>
+          <text class="comp-label" x="430" y="195" text-anchor="middle">Control Unit</text>
+          <text class="comp-value" x="430" y="225" text-anchor="middle" id="control-value" style="font-size:11px; fill: var(--dim);">idle</text>
+        </g>
+
+        <!-- IR → Control -->
+        <path id="bus-ir-control" class="bus control" d="M 515 120 L 515 145 L 430 145 L 430 170" />
+
+        <!-- ALU (Arithmetic Logic Unit) -->
+        <g id="g-alu">
+          <!-- ALU has a trapezoid shape -->
+          <polygon class="comp-box" points="630,180 720,210 720,300 630,330 630,270 615,255 630,240" />
+          <text class="comp-label" x="675" y="200" text-anchor="middle">ALU</text>
+          <text class="comp-value" x="675" y="260" text-anchor="middle" id="alu-op" style="font-size:11px; fill: var(--dim);">—</text>
+          <text class="comp-value" x="675" y="285" text-anchor="middle" id="alu-result" style="font-size:13px;">0</text>
+        </g>
+
+        <!-- Control → ALU -->
+        <path id="bus-control-alu" class="bus control" d="M 540 210 L 615 210" />
+
+        <!-- REGISTER FILE -->
+        <g id="g-regfile">
+          <rect class="comp-box" x="250" y="300" width="290" height="170" rx="3"/>
+          <text class="comp-label" x="395" y="320" text-anchor="middle">Registers</text>
+
+          <!-- R0 -->
+          <rect class="comp-box" x="270" y="335" width="120" height="35" rx="2" id="reg-R0-box"/>
+          <text class="comp-label" x="285" y="358" style="font-size:10px;">R0</text>
+          <text class="comp-value" x="380" y="358" text-anchor="end" id="reg-R0">0</text>
+
+          <!-- R1 -->
+          <rect class="comp-box" x="270" y="378" width="120" height="35" rx="2" id="reg-R1-box"/>
+          <text class="comp-label" x="285" y="401" style="font-size:10px;">R1</text>
+          <text class="comp-value" x="380" y="401" text-anchor="end" id="reg-R1">0</text>
+
+          <!-- R2 -->
+          <rect class="comp-box" x="400" y="335" width="120" height="35" rx="2" id="reg-R2-box"/>
+          <text class="comp-label" x="415" y="358" style="font-size:10px;">R2</text>
+          <text class="comp-value" x="510" y="358" text-anchor="end" id="reg-R2">0</text>
+
+          <!-- R3 -->
+          <rect class="comp-box" x="400" y="378" width="120" height="35" rx="2" id="reg-R3-box"/>
+          <text class="comp-label" x="415" y="401" style="font-size:10px;">R3</text>
+          <text class="comp-value" x="510" y="401" text-anchor="end" id="reg-R3">0</text>
+
+          <!-- FLAGS -->
+          <rect class="comp-box" x="270" y="425" width="250" height="32" rx="2" id="flags-box"/>
+          <text class="comp-label" x="285" y="446" style="font-size:10px;">Flags</text>
+          <text class="comp-value" x="510" y="446" text-anchor="end" id="flags-value" style="font-size:11px;">Z:0 N:0</text>
+        </g>
+
+        <!-- ALU → Registers -->
+        <path id="bus-alu-reg" class="bus" d="M 630 310 Q 580 380 540 385" />
+
+        <!-- Registers → ALU -->
+        <path id="bus-reg-alu" class="bus" d="M 540 340 Q 580 280 615 250" />
+
+        <!-- OUTPUT DEVICE -->
+        <g id="g-output">
+          <rect class="comp-box" x="610" y="380" width="120" height="80" rx="3"/>
+          <text class="comp-label" x="670" y="402" text-anchor="middle">Output</text>
+          <text class="comp-value glow-green" x="670" y="432" text-anchor="middle" id="output-value" style="font-size:14px;">—</text>
+        </g>
+
+        <!-- Register → Output -->
+        <path id="bus-reg-out" class="bus" d="M 540 420 L 610 420" />
+
+        <!-- Legend -->
+        <g transform="translate(250, 500)">
+          <line x1="0" y1="0" x2="20" y2="0" stroke="var(--green)" stroke-width="2"/>
+          <text x="26" y="4" class="bus-label">data</text>
+          <line x1="80" y1="0" x2="100" y2="0" stroke="var(--cyan)" stroke-width="2"/>
+          <text x="106" y="4" class="bus-label">address</text>
+          <line x1="170" y1="0" x2="190" y2="0" stroke="var(--magenta)" stroke-width="2"/>
+          <text x="196" y="4" class="bus-label">control</text>
+        </g>
+
+      </svg>
+    </div>
+  </div>
+
+  <!-- RIGHT COLUMN -->
+  <div style="display:flex; flex-direction:column; gap:14px; min-height:0;">
+    <div class="panel">
+      <div class="panel-head"><span><span class="dot"></span>Live State</span></div>
+      <div class="state-grid">
+        <div class="reg-cell" id="cell-pc"><div class="label">PC</div><div class="value" id="state-pc">0</div></div>
+        <div class="reg-cell" id="cell-ir"><div class="label">IR</div><div class="value" id="state-ir" style="font-size:11px;">—</div></div>
+        <div class="reg-cell" id="cell-R0"><div class="label">R0</div><div class="value" id="state-R0">0</div></div>
+        <div class="reg-cell" id="cell-R1"><div class="label">R1</div><div class="value" id="state-R1">0</div></div>
+        <div class="reg-cell" id="cell-R2"><div class="label">R2</div><div class="value" id="state-R2">0</div></div>
+        <div class="reg-cell" id="cell-R3"><div class="label">R3</div><div class="value" id="state-R3">0</div></div>
+        <div class="reg-cell" id="cell-Z"><div class="label">Zero Flag</div><div class="value" id="state-Z">0</div></div>
+        <div class="reg-cell" id="cell-N"><div class="label">Neg Flag</div><div class="value" id="state-N">0</div></div>
+      </div>
+    </div>
+
+    <div class="panel" style="flex:1; min-height:200px;">
+      <div class="panel-head"><span><span class="dot"></span>Memory</span></div>
+      <div class="memory" id="memoryView"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><span><span class="dot"></span>Console Output</span></div>
+      <div class="output-box" id="outputBox"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><span><span class="dot"></span>Instruction Reference</span></div>
+      <div class="ref">
+        <div class="row"><code>MOV Rx, #n</code><span>load value <strong>n</strong> into Rx</span></div>
+        <div class="row"><code>MOV Rx, Ry</code><span>copy Ry to Rx</span></div>
+        <div class="row"><code>ADD Rx, Ry</code><span>Rx = Rx + Ry</span></div>
+        <div class="row"><code>SUB Rx, Ry</code><span>Rx = Rx − Ry</span></div>
+        <div class="row"><code>MUL Rx, Ry</code><span>Rx = Rx × Ry</span></div>
+        <div class="row"><code>CMP Rx, Ry</code><span>compare; sets flags</span></div>
+        <div class="row"><code>JMP label</code><span>always jump</span></div>
+        <div class="row"><code>JZ label</code><span>jump if Z=1 (equal)</span></div>
+        <div class="row"><code>JNZ label</code><span>jump if Z=0</span></div>
+        <div class="row"><code>JG label</code><span>jump if greater</span></div>
+        <div class="row"><code>OUT Rx</code><span>print Rx to console</span></div>
+        <div class="row"><code>HALT</code><span>stop execution</span></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div class="footer-note">— built to demystify the silicon brain —</div>
+
+<script>
+/* ============================================================
+   CPU SIMULATOR
+   ============================================================ */
+
+const EXAMPLES = {
+  add: `; Add two numbers and print the result
+; This is the "Hello World" of CPUs
+
+MOV R0, #3      ; put 3 into register R0
+MOV R1, #4      ; put 4 into register R1
+ADD R0, R1      ; R0 = R0 + R1  (3 + 4 = 7)
+OUT R0          ; print the result
+HALT            ; stop`,
+
+  count: `; Count from 1 up to 5, printing each number
+; Shows how loops work in a CPU
+
+MOV R0, #1      ; R0 will be our counter
+MOV R1, #5      ; R1 is the limit
+MOV R2, #1      ; R2 = 1 (we add this each loop)
+
+loop:
+OUT R0          ; print current count
+ADD R0, R2      ; counter = counter + 1
+CMP R0, R1      ; compare counter to limit
+JG done         ; if counter > limit, jump to done
+JMP loop        ; otherwise, go again
+
+done:
+HALT`,
+
+  multiply: `; Multiply 6 x 4 using repeated addition
+; Old CPUs sometimes had to do this!
+
+MOV R0, #0      ; R0 = accumulator (running total)
+MOV R1, #6      ; R1 = the number we're adding
+MOV R2, #4      ; R2 = how many times to add it
+MOV R3, #1      ; R3 = 1 (for decrementing R2)
+
+loop:
+ADD R0, R1      ; total = total + 6
+SUB R2, R3      ; counter = counter - 1
+CMP R2, R3      ; is counter still >= 1?
+JZ last         ; if counter == 1, do one more
+JG loop         ; if counter > 1, loop again
+JMP done
+
+last:
+ADD R0, R1
+done:
+OUT R0          ; should print 24
+HALT`,
+
+  max: `; Find the larger of two numbers
+; Demonstrates conditional logic
+
+MOV R0, #17     ; first number
+MOV R1, #23     ; second number
+CMP R0, R1      ; compare R0 and R1
+JG r0bigger    ; if R0 > R1, jump
+OUT R1          ; otherwise R1 is bigger or equal
+HALT
+
+r0bigger:
+OUT R0
+HALT`,
+
+  factorial: `; Compute factorial of 5 = 5*4*3*2*1 = 120
+; Classic recursion-free loop
+
+MOV R0, #1      ; result accumulator
+MOV R1, #5      ; n (number to factorial)
+MOV R2, #1      ; constant 1
+MOV R3, #1      ; constant 1 (we keep both)
+
+loop:
+MUL R0, R1      ; result *= n
+SUB R1, R2      ; n = n - 1
+CMP R1, R3      ; while n > 1
+JG loop
+MUL R0, R1      ; one more multiply (the n=1 case is fine, *1)
+
+OUT R0          ; should print 120
+HALT`,
+
+  fib: `; Print the first 8 Fibonacci numbers
+; 1, 1, 2, 3, 5, 8, 13, 21
+; (unrolled — easier to follow than with a loop)
+
+MOV R0, #1      ; "current"
+MOV R1, #1      ; "next"
+
+OUT R0          ; 1
+OUT R1          ; 1
+ADD R0, R1      ; R0 = 1+1 = 2
+OUT R0          ; 2
+ADD R1, R0      ; R1 = 1+2 = 3
+OUT R1          ; 3
+ADD R0, R1      ; R0 = 2+3 = 5
+OUT R0          ; 5
+ADD R1, R0      ; R1 = 3+5 = 8
+OUT R1          ; 8
+ADD R0, R1      ; R0 = 5+8 = 13
+OUT R0          ; 13
+ADD R1, R0      ; R1 = 8+13 = 21
+OUT R1          ; 21
+HALT`
+};
+
+/* ---------- CPU STATE ---------- */
+const cpu = {
+  pc: 0,
+  ir: null,
+  registers: { R0: 0, R1: 0, R2: 0, R3: 0 },
+  flags: { Z: 0, N: 0 },
+  memory: [],        // instructions stored at addresses 0..N-1
+  labels: {},        // label -> address
+  output: [],
+  halted: false,
+  cycle: 0,
+  aluOp: null,
+  aluResult: null,
+};
+
+let running = false;
+let stepping = false;
+let runTimer = null;
+
+/* ---------- ASSEMBLER ---------- */
+function assemble(src) {
+  const rawLines = src.split('\n');
+  const instructions = [];
+  const labels = {};
+  const sourceMap = []; // maps instruction index -> source line number
+
+  // First pass: collect labels and instructions
+  let addr = 0;
+  rawLines.forEach((line, idx) => {
+    // strip comments
+    let l = line.replace(/;.*$/, '').trim();
+    if (!l) return;
+
+    // label?
+    const labelMatch = l.match(/^(\w+):\s*(.*)$/);
+    if (labelMatch) {
+      labels[labelMatch[1]] = addr;
+      l = labelMatch[2].trim();
+      if (!l) return;
+    }
+
+    const parts = l.split(/[\s,]+/).filter(p => p);
+    const op = parts[0].toUpperCase();
+    const args = parts.slice(1);
+
+    instructions.push({ op, args, raw: l, line: idx });
+    sourceMap.push(idx);
+    addr++;
+  });
+
+  // Second pass: resolve label references and validate
+  instructions.forEach(ins => {
+    if (['JMP', 'JZ', 'JNZ', 'JG'].includes(ins.op)) {
+      const tgt = ins.args[0];
+      if (tgt && labels[tgt] !== undefined) {
+        ins.target = labels[tgt];
+        ins.targetLabel = tgt;
+      } else if (tgt && !isNaN(parseInt(tgt))) {
+        ins.target = parseInt(tgt);
+      } else {
+        ins.error = `Unknown label: ${tgt}`;
+      }
+    }
+  });
+
+  return { instructions, labels, sourceMap };
+}
+
+/* ---------- LOAD PROGRAM INTO MEMORY ---------- */
+function loadProgram() {
+  const src = document.getElementById('codeArea').value;
+  const { instructions, labels, sourceMap } = assemble(src);
+
+  cpu.memory = instructions;
+  cpu.labels = labels;
+  cpu.sourceMap = sourceMap;
+  cpu.pc = 0;
+  cpu.ir = null;
+  cpu.registers = { R0: 0, R1: 0, R2: 0, R3: 0 };
+  cpu.flags = { Z: 0, N: 0 };
+  cpu.output = [];
+  cpu.halted = false;
+  cpu.cycle = 0;
+  cpu.aluOp = null;
+  cpu.aluResult = null;
+
+  // check for assembly errors
+  const errs = instructions.filter(i => i.error);
+  if (errs.length) {
+    addLog('error', 'ASM', errs.map(e => e.error).join(' • '));
+  }
+
+  renderAll();
+  clearLog();
+  addLog('info', 'BOOT', `Program loaded · ${instructions.length} instructions · ready to execute`);
+}
+
+/* ---------- EXECUTION ---------- */
+async function step() {
+  if (stepping) return;
+  stepping = true;
+  try {
+    await stepInternal();
+  } finally {
+    stepping = false;
+  }
+}
+
+async function stepInternal() {
+  if (cpu.halted) {
+    addLog('info', 'INFO', 'CPU is halted. Press Reset to run again.');
+    return;
+  }
+  if (cpu.pc >= cpu.memory.length) {
+    addLog('info', 'INFO', 'End of program reached.');
+    cpu.halted = true;
+    return;
+  }
+
+  cpu.cycle++;
+  updateCycle();
+
+  const ins = cpu.memory[cpu.pc];
+  if (ins.error) {
+    addLog('error', 'ERR', ins.error);
+    cpu.halted = true;
+    return;
+  }
+
+  // ============ PHASE 1: FETCH ============
+  setPhase('fetch');
+  highlightComp('g-memory', true);
+  highlightComp('g-pc', true);
+  highlightBus('bus-cpu-mem', true, 'address');
+  addLog('fetch', 'FETCH', `PC = ${cpu.pc}. CPU asks memory: "give me instruction at address ${cpu.pc}"`);
+  await sleep(stepDelay() * 0.6);
+
+  highlightBus('bus-mem-cpu', true);
+  highlightComp('g-ir', true);
+  cpu.ir = ins;
+  document.getElementById('ir-value').textContent = ins.raw.length > 18 ? ins.raw.slice(0,16)+'…' : ins.raw;
+  document.getElementById('state-ir').textContent = ins.raw;
+  flash('cell-ir');
+  addLog('fetch', 'FETCH', `Memory sends "${ins.raw}" → loaded into Instruction Register`);
+  await sleep(stepDelay() * 0.7);
+  clearBuses();
+  clearComps();
+
+  // ============ PHASE 2: DECODE ============
+  setPhase('decode');
+  highlightComp('g-ir', true);
+  highlightComp('g-control', true);
+  highlightBus('bus-ir-control', true, 'control');
+  document.getElementById('control-value').textContent = `decoding: ${ins.op}`;
+  addLog('decode', 'DECODE', `Control unit reads "${ins.op}" — figures out which circuits to activate`);
+  await sleep(stepDelay() * 0.8);
+
+  // ============ PHASE 3 & 4: EXECUTE + WRITEBACK ============
+  setPhase('execute');
+  await executeInstruction(ins);
+
+  cpu.ir = null;
+  document.getElementById('control-value').textContent = 'idle';
+  clearBuses();
+  clearComps();
+  clearPhase();
+  renderAll();
+}
+
+async function executeInstruction(ins) {
+  const { op, args } = ins;
+  let advancePC = true;
+
+  const reg = (name) => {
+    if (!(name in cpu.registers)) throw new Error(`Bad register: ${name}`);
+    return cpu.registers[name];
+  };
+  const setReg = (name, val) => {
+    cpu.registers[name] = val;
+  };
+  const parseImm = (s) => {
+    if (s.startsWith('#')) return parseInt(s.slice(1));
+    return parseInt(s);
+  };
+
+  switch (op) {
+    case 'MOV': {
+      const dest = args[0];
+      const src = args[1];
+      let val;
+      if (src.startsWith('#')) {
+        val = parseImm(src);
+        highlightComp(`reg-${dest}-box`, true);
+        addLog('execute', 'EXEC', `MOV: write the constant ${val} into ${dest}`);
+      } else {
+        val = reg(src);
+        highlightComp(`reg-${src}-box`, true);
+        highlightComp(`reg-${dest}-box`, true);
+        addLog('execute', 'EXEC', `MOV: copy ${src} (= ${val}) into ${dest}`);
+      }
+      await sleep(stepDelay() * 0.5);
+      setPhase('write');
+      setReg(dest, val);
+      flash(`cell-${dest}`);
+      addLog('write', 'WRITE', `${dest} ← ${val}`);
+      await sleep(stepDelay() * 0.6);
+      break;
+    }
+
+    case 'ADD': case 'SUB': case 'MUL': {
+      const dest = args[0], src = args[1];
+      const a = reg(dest), b = reg(src);
+      highlightComp(`reg-${dest}-box`, true);
+      highlightComp(`reg-${src}-box`, true);
+      highlightBus('bus-reg-alu', true);
+      highlightComp('g-alu', true);
+      const opSym = op === 'ADD' ? '+' : op === 'SUB' ? '−' : '×';
+      cpu.aluOp = `${a} ${opSym} ${b}`;
+      document.getElementById('alu-op').textContent = cpu.aluOp;
+      addLog('execute', 'EXEC', `ALU computes ${dest}(${a}) ${opSym} ${src}(${b})`);
+      await sleep(stepDelay() * 0.7);
+      let result;
+      if (op === 'ADD') result = a + b;
+      else if (op === 'SUB') result = a - b;
+      else result = a * b;
+      cpu.aluResult = result;
+      document.getElementById('alu-result').textContent = result;
+      addLog('execute', 'EXEC', `ALU result: ${result}`);
+      await sleep(stepDelay() * 0.5);
+      setPhase('write');
+      highlightBus('bus-alu-reg', true);
+      setReg(dest, result);
+      flash(`cell-${dest}`);
+      addLog('write', 'WRITE', `${dest} ← ${result} (sent back from ALU)`);
+      await sleep(stepDelay() * 0.6);
+      break;
+    }
+
+    case 'CMP': {
+      const a = reg(args[0]), b = reg(args[1]);
+      highlightComp(`reg-${args[0]}-box`, true);
+      highlightComp(`reg-${args[1]}-box`, true);
+      highlightComp('g-alu', true);
+      highlightBus('bus-reg-alu', true);
+      cpu.aluOp = `${a} − ${b}`;
+      document.getElementById('alu-op').textContent = cpu.aluOp;
+      const diff = a - b;
+      cpu.aluResult = diff;
+      cpu.flags.Z = (diff === 0) ? 1 : 0;
+      cpu.flags.N = (diff < 0) ? 1 : 0;
+      document.getElementById('alu-result').textContent = diff;
+      addLog('execute', 'EXEC', `CMP: ALU computes ${a} − ${b} = ${diff}, just to set the flags`);
+      await sleep(stepDelay() * 0.7);
+      setPhase('write');
+      highlightComp('flags-box', true);
+      flash('cell-Z'); flash('cell-N');
+      addLog('write', 'WRITE', `Flags updated → Z=${cpu.flags.Z}  N=${cpu.flags.N}`);
+      await sleep(stepDelay() * 0.5);
+      break;
+    }
+
+    case 'JMP': {
+      highlightComp('g-pc', true);
+      addLog('execute', 'EXEC', `JMP: change PC to ${ins.target}${ins.targetLabel ? ' ('+ins.targetLabel+')' : ''}`);
+      await sleep(stepDelay() * 0.5);
+      cpu.pc = ins.target;
+      flash('cell-pc');
+      advancePC = false;
+      break;
+    }
+
+    case 'JZ': case 'JNZ': case 'JG': {
+      let condMet = false;
+      let condDesc = '';
+      if (op === 'JZ')  { condMet = cpu.flags.Z === 1; condDesc = `Zero flag is ${cpu.flags.Z}`; }
+      if (op === 'JNZ') { condMet = cpu.flags.Z === 0; condDesc = `Zero flag is ${cpu.flags.Z}`; }
+      if (op === 'JG')  { condMet = cpu.flags.Z === 0 && cpu.flags.N === 0; condDesc = `Z=${cpu.flags.Z}, N=${cpu.flags.N}`; }
+      highlightComp('flags-box', true);
+      addLog('execute', 'EXEC', `${op}: check flags (${condDesc}) → ${condMet ? 'JUMP' : 'no jump, keep going'}`);
+      await sleep(stepDelay() * 0.6);
+      if (condMet) {
+        highlightComp('g-pc', true);
+        cpu.pc = ins.target;
+        flash('cell-pc');
+        advancePC = false;
+        addLog('write', 'WRITE', `PC ← ${ins.target}${ins.targetLabel ? ' ('+ins.targetLabel+')' : ''}`);
+        await sleep(stepDelay() * 0.4);
+      }
+      break;
+    }
+
+    case 'OUT': {
+      const v = reg(args[0]);
+      highlightComp(`reg-${args[0]}-box`, true);
+      highlightBus('bus-reg-out', true);
+      highlightComp('g-output', true);
+      document.getElementById('output-value').textContent = v;
+      cpu.output.push(v);
+      addLog('execute', 'EXEC', `OUT: send ${args[0]} (= ${v}) to the output device`);
+      renderOutput();
+      await sleep(stepDelay() * 0.7);
+      break;
+    }
+
+    case 'HALT': {
+      addLog('execute', 'EXEC', `HALT: stop execution. CPU goes to sleep.`);
+      cpu.halted = true;
+      running = false;
+      clearInterval(runTimer);
+      document.getElementById('runBtn').textContent = '▶ Run';
+      await sleep(stepDelay() * 0.3);
+      break;
+    }
+
+    default:
+      addLog('error', 'ERR', `Unknown instruction: ${op}`);
+      cpu.halted = true;
+  }
+
+  if (advancePC && !cpu.halted) {
+    cpu.pc++;
+    flash('cell-pc');
+  }
+}
+
+/* ---------- UI HELPERS ---------- */
+function stepDelay() {
+  const speed = parseInt(document.getElementById('speedSlider').value);
+  // speed 1 = slow (1500ms), speed 10 = fast (60ms)
+  return 1600 - (speed - 1) * 170;
+}
+
+function setPhase(phase) {
+  document.querySelectorAll('.phase-pill').forEach(p => p.classList.remove('active'));
+  const el = document.querySelector(`.phase-pill[data-phase="${phase}"]`);
+  if (el) el.classList.add('active');
+}
+function clearPhase() {
+  document.querySelectorAll('.phase-pill').forEach(p => p.classList.remove('active'));
+}
+
+function highlightComp(id, on) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  // find first rect/polygon child or the element itself
+  let target = el;
+  if (el.tagName === 'g') {
+    target = el.querySelector('rect, polygon');
+  }
+  if (target) {
+    if (on) target.classList.add('active');
+    else target.classList.remove('active');
+  }
+}
+function clearComps() {
+  document.querySelectorAll('.comp-box.active').forEach(el => el.classList.remove('active'));
+}
+
+function highlightBus(id, on, type) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (on) {
+    el.classList.add('active');
+    el.setAttribute('stroke-dasharray', '6 4');
+    if (type === 'control') el.classList.add('control');
+    if (type === 'address') el.classList.add('address');
+  } else {
+    el.classList.remove('active');
+    el.removeAttribute('stroke-dasharray');
+  }
+}
+function clearBuses() {
+  document.querySelectorAll('.bus.active').forEach(b => {
+    b.classList.remove('active');
+    b.removeAttribute('stroke-dasharray');
+  });
+}
+
+function flash(cellId) {
+  const el = document.getElementById(cellId);
+  if (!el) return;
+  el.classList.add('changed');
+  setTimeout(() => el.classList.remove('changed'), 700);
+}
+
+function renderAll() {
+  document.getElementById('pc-value').textContent = cpu.pc;
+  document.getElementById('state-pc').textContent = cpu.pc;
+  document.getElementById('ir-value').textContent = cpu.ir ? (cpu.ir.raw.length > 18 ? cpu.ir.raw.slice(0,16)+'…' : cpu.ir.raw) : '—';
+  document.getElementById('state-ir').textContent = cpu.ir ? cpu.ir.raw : '—';
+  ['R0','R1','R2','R3'].forEach(r => {
+    document.getElementById('reg-'+r).textContent = cpu.registers[r];
+    document.getElementById('state-'+r).textContent = cpu.registers[r];
+  });
+  document.getElementById('flags-value').textContent = `Z:${cpu.flags.Z} N:${cpu.flags.N}`;
+  document.getElementById('state-Z').textContent = cpu.flags.Z;
+  document.getElementById('state-N').textContent = cpu.flags.N;
+
+  // ALU display — reflects current cpu state, blank when idle
+  document.getElementById('alu-op').textContent = cpu.aluOp || '—';
+  document.getElementById('alu-result').textContent = cpu.aluResult ?? 0;
+
+  // Output device (the last printed value display)
+  const lastOut = cpu.output.length ? cpu.output[cpu.output.length - 1] : '—';
+  document.getElementById('output-value').textContent = lastOut;
+
+  // Console output box
+  renderOutput();
+
+  // memory view
+  const mv = document.getElementById('memoryView');
+  mv.innerHTML = '';
+  cpu.memory.forEach((ins, i) => {
+    const row = document.createElement('div');
+    row.className = 'mem-row';
+    if (i === cpu.pc) row.classList.add('pc-here');
+    row.innerHTML = `<span class="addr">${String(i).padStart(2,'0')}</span><span class="val">${ins.raw}</span>`;
+    mv.appendChild(row);
+  });
+
+  updateLineNumbers();
+  updateCycle();
+}
+
+function updateLineNumbers() {
+  const lines = document.getElementById('codeArea').value.split('\n').length;
+  const ln = document.getElementById('lineNumbers');
+  let html = '';
+  // figure out which source line current PC is on
+  const currentSrcLine = cpu.memory[cpu.pc]?.line;
+  for (let i = 0; i < lines; i++) {
+    const cls = (i === currentSrcLine) ? 'ln current' : 'ln';
+    html += `<div class="${cls}">${i + 1}</div>`;
+  }
+  ln.innerHTML = html;
+}
+
+function renderOutput() {
+  const box = document.getElementById('outputBox');
+  box.innerHTML = cpu.output.map(v => `<div class="output-line">▸ ${v}</div>`).join('');
+  box.scrollTop = box.scrollHeight;
+}
+
+function updateCycle() {
+  document.getElementById('cycleBadge').textContent = `Cycle ${cpu.cycle}`;
+}
+
+function addLog(type, tag, body) {
+  const log = document.getElementById('log');
+  const entry = document.createElement('div');
+  entry.className = `entry ${type}`;
+  entry.innerHTML = `<span class="tag">${tag}</span><span class="body">${body}</span>`;
+  log.appendChild(entry);
+  log.scrollTop = log.scrollHeight;
+  // keep log size manageable
+  while (log.children.length > 200) log.removeChild(log.firstChild);
+}
+function clearLog() {
+  document.getElementById('log').innerHTML = '';
+}
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+/* ---------- RUN MODE ---------- */
+async function toggleRun() {
+  const btn = document.getElementById('runBtn');
+  if (running) {
+    running = false;
+    btn.textContent = '▶ Run';
+    return;
+  }
+  running = true;
+  btn.textContent = '⏸ Pause';
+  while (running && !cpu.halted && cpu.pc < cpu.memory.length) {
+    await step();
+    if (cpu.halted) break;
+    // small extra pause between full instructions in run mode
+    await sleep(80);
+  }
+  running = false;
+  btn.textContent = '▶ Run';
+}
+
+/* ---------- WIRING ---------- */
+document.getElementById('exampleSelect').addEventListener('change', (e) => {
+  document.getElementById('codeArea').value = EXAMPLES[e.target.value];
+  loadProgram();
+});
+document.getElementById('codeArea').addEventListener('input', () => {
+  updateLineNumbers();
+});
+document.getElementById('codeArea').addEventListener('change', () => {
+  loadProgram();
+});
+document.getElementById('resetBtn').addEventListener('click', () => {
+  running = false;
+  document.getElementById('runBtn').textContent = '▶ Run';
+  loadProgram();
+});
+document.getElementById('stepBtn').addEventListener('click', () => {
+  if (running) return;
+  step();
+});
+document.getElementById('runBtn').addEventListener('click', toggleRun);
+
+// Initial load
+document.getElementById('codeArea').value = EXAMPLES.add;
+loadProgram();
+
+</script>
+
+</body>
+</html>
