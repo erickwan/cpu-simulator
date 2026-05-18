@@ -110,6 +110,13 @@
     box-shadow: 0 0 14px var(--green-glow);
   }
   .btn.green:hover { background: #95f5b3; }
+  .btn.micro-on {
+    background: var(--cyan);
+    color: #0a1a1c;
+    border-color: var(--cyan);
+    box-shadow: 0 0 14px rgba(101,214,224,0.4);
+  }
+  .btn.micro-on:hover { background: #85e6ee; }
   .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
   .speed {
@@ -514,6 +521,7 @@
     <button class="btn" id="resetBtn">⟲ Reset</button>
     <button class="btn primary" id="stepBtn">▸ Step</button>
     <button class="btn green" id="runBtn">▶ Run</button>
+    <button class="btn" id="microBtn" title="Step through each phase individually">Micro: OFF</button>
     <div class="speed">
       <span>Speed</span>
       <input type="range" min="1" max="10" value="5" id="speedSlider">
@@ -853,6 +861,11 @@ const cpu = {
 
 let running = false;
 let stepping = false;
+let microMode = false;
+// micro-step state: which phase are we about to run next?
+// null = no instruction in progress, 'fetch','decode','execute','write' = next phase to run
+let microPhase = null;
+let microIns = null; // the instruction being micro-stepped
 let runTimer = null;
 
 /* ---------- ASSEMBLER ---------- */
@@ -938,13 +951,17 @@ async function step() {
   if (stepping) return;
   stepping = true;
   try {
-    await stepInternal();
+    if (microMode) {
+      await microStep();
+    } else {
+      await stepFullInstruction();
+    }
   } finally {
     stepping = false;
   }
 }
 
-async function stepInternal() {
+async function stepFullInstruction() {
   if (cpu.halted) {
     addLog('info', 'INFO', 'CPU is halted. Press Reset to run again.');
     return;
@@ -965,7 +982,96 @@ async function stepInternal() {
     return;
   }
 
-  // ============ PHASE 1: FETCH ============
+  await doFetch(ins);
+  await sleep(stepDelay() * 0.7);
+  clearBuses();
+  clearComps();
+
+  await doDecode(ins);
+  await sleep(stepDelay() * 0.8);
+
+  await doExecute(ins);
+  await doWriteback(ins);
+
+  clearBuses();
+  clearComps();
+  clearPhase();
+  renderAll();
+}
+
+async function microStep() {
+  if (cpu.halted) {
+    addLog('info', 'INFO', 'CPU is halted. Press Reset to run again.');
+    return;
+  }
+  if (cpu.pc >= cpu.memory.length) {
+    addLog('info', 'INFO', 'End of program reached.');
+    cpu.halted = true;
+    return;
+  }
+
+  if (!microPhase) {
+    microPhase = 'fetch';
+    cpu.cycle++;
+    updateCycle();
+    const ins = cpu.memory[cpu.pc];
+    if (ins.error) {
+      addLog('error', 'ERR', ins.error);
+      cpu.halted = true;
+      microPhase = null;
+      return;
+    }
+    microIns = ins;
+  }
+
+  const ins = microIns;
+
+  switch (microPhase) {
+    case 'fetch':
+      await doFetch(ins);
+      microPhase = 'decode';
+      break;
+
+    case 'decode':
+      clearBuses();
+      clearComps();
+      await doDecode(ins);
+      microPhase = 'execute';
+      break;
+
+    case 'execute':
+      clearBuses();
+      clearComps();
+      await doExecute(ins);
+      microPhase = 'write';
+      break;
+
+    case 'write':
+      await doWriteback(ins);
+      clearBuses();
+      clearComps();
+      clearPhase();
+      renderAll();
+      microPhase = null;
+      microIns = null;
+      break;
+  }
+
+  updateStepBtnLabel();
+}
+
+function updateStepBtnLabel() {
+  const btn = document.getElementById('stepBtn');
+  if (!microMode || !microPhase) {
+    btn.textContent = '▸ Step';
+  } else {
+    const labels = { fetch: '▸ Fetch', decode: '▸ Decode', execute: '▸ Execute', write: '▸ Write' };
+    btn.textContent = labels[microPhase] || '▸ Step';
+  }
+}
+
+/* ---------- PHASE FUNCTIONS ---------- */
+async function doFetch(ins) {
   setPhase('fetch');
   highlightComp('g-memory', true);
   highlightComp('g-pc', true);
@@ -980,72 +1086,55 @@ async function stepInternal() {
   document.getElementById('state-ir').textContent = ins.raw;
   flash('cell-ir');
   addLog('fetch', 'FETCH', `Memory sends "${ins.raw}" → loaded into Instruction Register`);
-  await sleep(stepDelay() * 0.7);
-  clearBuses();
-  clearComps();
+}
 
-  // ============ PHASE 2: DECODE ============
+async function doDecode(ins) {
   setPhase('decode');
   highlightComp('g-ir', true);
   highlightComp('g-control', true);
   highlightBus('bus-ir-control', true, 'control');
   document.getElementById('control-value').textContent = `decoding: ${ins.op}`;
   addLog('decode', 'DECODE', `Control unit reads "${ins.op}" — figures out which circuits to activate`);
-  await sleep(stepDelay() * 0.8);
-
-  // ============ PHASE 3 & 4: EXECUTE + WRITEBACK ============
-  setPhase('execute');
-  await executeInstruction(ins);
-
-  clearBuses();
-  clearComps();
-  clearPhase();
-  renderAll();
 }
 
-async function executeInstruction(ins) {
-  const { op, args } = ins;
-  let advancePC = true;
+function cpuReg(name) {
+  if (!(name in cpu.registers)) throw new Error(`Bad register: ${name}`);
+  return cpu.registers[name];
+}
+function cpuSetReg(name, val) {
+  cpu.registers[name] = val;
+}
+function parseImm(s) {
+  if (s.startsWith('#')) return parseInt(s.slice(1));
+  return parseInt(s);
+}
 
-  const reg = (name) => {
-    if (!(name in cpu.registers)) throw new Error(`Bad register: ${name}`);
-    return cpu.registers[name];
-  };
-  const setReg = (name, val) => {
-    cpu.registers[name] = val;
-  };
-  const parseImm = (s) => {
-    if (s.startsWith('#')) return parseInt(s.slice(1));
-    return parseInt(s);
-  };
+async function doExecute(ins) {
+  setPhase('execute');
+  clearBuses();
+  clearComps();
+  const { op, args } = ins;
 
   switch (op) {
     case 'MOV': {
-      const dest = args[0];
-      const src = args[1];
-      let val;
+      const dest = args[0], src = args[1];
       if (src.startsWith('#')) {
-        val = parseImm(src);
+        const val = parseImm(src);
         highlightComp(`reg-${dest}-box`, true);
         addLog('execute', 'EXEC', `MOV: write the constant ${val} into ${dest}`);
       } else {
-        val = reg(src);
+        const val = cpuReg(src);
         highlightComp(`reg-${src}-box`, true);
         highlightComp(`reg-${dest}-box`, true);
         addLog('execute', 'EXEC', `MOV: copy ${src} (= ${val}) into ${dest}`);
       }
       await sleep(stepDelay() * 0.5);
-      setPhase('write');
-      setReg(dest, val);
-      flash(`cell-${dest}`);
-      addLog('write', 'WRITE', `${dest} ← ${val}`);
-      await sleep(stepDelay() * 0.6);
       break;
     }
 
     case 'ADD': case 'SUB': case 'MUL': {
       const dest = args[0], src = args[1];
-      const a = reg(dest), b = reg(src);
+      const a = cpuReg(dest), b = cpuReg(src);
       highlightComp(`reg-${dest}-box`, true);
       highlightComp(`reg-${src}-box`, true);
       highlightBus('bus-reg-alu', true);
@@ -1063,17 +1152,11 @@ async function executeInstruction(ins) {
       document.getElementById('alu-result').textContent = result;
       addLog('execute', 'EXEC', `ALU result: ${result}`);
       await sleep(stepDelay() * 0.5);
-      setPhase('write');
-      highlightBus('bus-alu-reg', true);
-      setReg(dest, result);
-      flash(`cell-${dest}`);
-      addLog('write', 'WRITE', `${dest} ← ${result} (sent back from ALU)`);
-      await sleep(stepDelay() * 0.6);
       break;
     }
 
     case 'CMP': {
-      const a = reg(args[0]), b = reg(args[1]);
+      const a = cpuReg(args[0]), b = cpuReg(args[1]);
       highlightComp(`reg-${args[0]}-box`, true);
       highlightComp(`reg-${args[1]}-box`, true);
       highlightComp('g-alu', true);
@@ -1082,16 +1165,9 @@ async function executeInstruction(ins) {
       document.getElementById('alu-op').textContent = cpu.aluOp;
       const diff = a - b;
       cpu.aluResult = diff;
-      cpu.flags.Z = (diff === 0) ? 1 : 0;
-      cpu.flags.N = (diff < 0) ? 1 : 0;
       document.getElementById('alu-result').textContent = diff;
       addLog('execute', 'EXEC', `CMP: ALU computes ${a} − ${b} = ${diff}, just to set the flags`);
       await sleep(stepDelay() * 0.7);
-      setPhase('write');
-      highlightComp('flags-box', true);
-      flash('cell-Z'); flash('cell-N');
-      addLog('write', 'WRITE', `Flags updated → Z=${cpu.flags.Z}  N=${cpu.flags.N}`);
-      await sleep(stepDelay() * 0.5);
       break;
     }
 
@@ -1099,34 +1175,26 @@ async function executeInstruction(ins) {
       highlightComp('g-pc', true);
       addLog('execute', 'EXEC', `JMP: change PC to ${ins.target}${ins.targetLabel ? ' ('+ins.targetLabel+')' : ''}`);
       await sleep(stepDelay() * 0.5);
-      cpu.pc = ins.target;
-      flash('cell-pc');
-      advancePC = false;
       break;
     }
 
     case 'JZ': case 'JNZ': case 'JG': {
-      let condMet = false;
       let condDesc = '';
-      if (op === 'JZ')  { condMet = cpu.flags.Z === 1; condDesc = `Zero flag is ${cpu.flags.Z}`; }
-      if (op === 'JNZ') { condMet = cpu.flags.Z === 0; condDesc = `Zero flag is ${cpu.flags.Z}`; }
-      if (op === 'JG')  { condMet = cpu.flags.Z === 0 && cpu.flags.N === 0; condDesc = `Z=${cpu.flags.Z}, N=${cpu.flags.N}`; }
+      if (op === 'JZ')  condDesc = `Zero flag is ${cpu.flags.Z}`;
+      if (op === 'JNZ') condDesc = `Zero flag is ${cpu.flags.Z}`;
+      if (op === 'JG')  condDesc = `Z=${cpu.flags.Z}, N=${cpu.flags.N}`;
+      let condMet = false;
+      if (op === 'JZ')  condMet = cpu.flags.Z === 1;
+      if (op === 'JNZ') condMet = cpu.flags.Z === 0;
+      if (op === 'JG')  condMet = cpu.flags.Z === 0 && cpu.flags.N === 0;
       highlightComp('flags-box', true);
       addLog('execute', 'EXEC', `${op}: check flags (${condDesc}) → ${condMet ? 'JUMP' : 'no jump, keep going'}`);
       await sleep(stepDelay() * 0.6);
-      if (condMet) {
-        highlightComp('g-pc', true);
-        cpu.pc = ins.target;
-        flash('cell-pc');
-        advancePC = false;
-        addLog('write', 'WRITE', `PC ← ${ins.target}${ins.targetLabel ? ' ('+ins.targetLabel+')' : ''}`);
-        await sleep(stepDelay() * 0.4);
-      }
       break;
     }
 
     case 'OUT': {
-      const v = reg(args[0]);
+      const v = cpuReg(args[0]);
       highlightComp(`reg-${args[0]}-box`, true);
       highlightBus('bus-reg-out', true);
       highlightComp('g-output', true);
@@ -1151,6 +1219,91 @@ async function executeInstruction(ins) {
     default:
       addLog('error', 'ERR', `Unknown instruction: ${op}`);
       cpu.halted = true;
+  }
+}
+
+async function doWriteback(ins) {
+  setPhase('write');
+  clearBuses();
+  clearComps();
+  const { op, args } = ins;
+  let advancePC = true;
+
+  switch (op) {
+    case 'MOV': {
+      const dest = args[0], src = args[1];
+      const val = src.startsWith('#') ? parseImm(src) : cpuReg(src);
+      cpuSetReg(dest, val);
+      flash(`cell-${dest}`);
+      addLog('write', 'WRITE', `${dest} ← ${val}`);
+      await sleep(stepDelay() * 0.6);
+      break;
+    }
+
+    case 'ADD': case 'SUB': case 'MUL': {
+      const dest = args[0];
+      const result = cpu.aluResult;
+      highlightBus('bus-alu-reg', true);
+      cpuSetReg(dest, result);
+      flash(`cell-${dest}`);
+      addLog('write', 'WRITE', `${dest} ← ${result} (sent back from ALU)`);
+      await sleep(stepDelay() * 0.6);
+      break;
+    }
+
+    case 'CMP': {
+      const a = cpuReg(args[0]), b = cpuReg(args[1]);
+      const diff = cpu.aluResult;
+      cpu.flags.Z = (diff === 0) ? 1 : 0;
+      cpu.flags.N = (diff < 0) ? 1 : 0;
+      highlightComp('flags-box', true);
+      flash('cell-Z'); flash('cell-N');
+      addLog('write', 'WRITE', `Flags updated → Z=${cpu.flags.Z}  N=${cpu.flags.N}`);
+      await sleep(stepDelay() * 0.5);
+      break;
+    }
+
+    case 'JMP': {
+      cpu.pc = ins.target;
+      flash('cell-pc');
+      advancePC = false;
+      addLog('write', 'WRITE', `PC ← ${ins.target}${ins.targetLabel ? ' ('+ins.targetLabel+')' : ''}`);
+      await sleep(stepDelay() * 0.4);
+      break;
+    }
+
+    case 'JZ': case 'JNZ': case 'JG': {
+      let condMet = false;
+      if (op === 'JZ')  condMet = cpu.flags.Z === 1;
+      if (op === 'JNZ') condMet = cpu.flags.Z === 0;
+      if (op === 'JG')  condMet = cpu.flags.Z === 0 && cpu.flags.N === 0;
+      if (condMet) {
+        highlightComp('g-pc', true);
+        cpu.pc = ins.target;
+        flash('cell-pc');
+        advancePC = false;
+        addLog('write', 'WRITE', `PC ← ${ins.target}${ins.targetLabel ? ' ('+ins.targetLabel+')' : ''}`);
+      } else {
+        addLog('write', 'WRITE', `No jump — PC advances normally`);
+      }
+      await sleep(stepDelay() * 0.4);
+      break;
+    }
+
+    case 'OUT': {
+      addLog('write', 'WRITE', `Output sent`);
+      await sleep(stepDelay() * 0.3);
+      break;
+    }
+
+    case 'HALT': {
+      addLog('write', 'WRITE', `CPU halted`);
+      await sleep(stepDelay() * 0.3);
+      break;
+    }
+
+    default:
+      break;
   }
 
   if (advancePC && !cpu.halted) {
@@ -1307,12 +1460,18 @@ async function toggleRun() {
     btn.textContent = '▶ Run';
     return;
   }
+  // finish any in-progress micro instruction before starting run
+  if (microPhase) {
+    microPhase = null;
+    microIns = null;
+    updateStepBtnLabel();
+  }
   running = true;
   btn.textContent = '⏸ Pause';
   while (running && !cpu.halted && cpu.pc < cpu.memory.length) {
-    await step();
+    stepping = true;
+    try { await stepFullInstruction(); } finally { stepping = false; }
     if (cpu.halted) break;
-    // small extra pause between full instructions in run mode
     await sleep(80);
   }
   running = false;
@@ -1332,14 +1491,28 @@ document.getElementById('codeArea').addEventListener('change', () => {
 });
 document.getElementById('resetBtn').addEventListener('click', () => {
   running = false;
+  microPhase = null;
+  microIns = null;
   document.getElementById('runBtn').textContent = '▶ Run';
   loadProgram();
+  updateStepBtnLabel();
 });
 document.getElementById('stepBtn').addEventListener('click', () => {
   if (running) return;
   step();
 });
 document.getElementById('runBtn').addEventListener('click', toggleRun);
+document.getElementById('microBtn').addEventListener('click', () => {
+  microMode = !microMode;
+  const btn = document.getElementById('microBtn');
+  btn.textContent = microMode ? 'Micro: ON' : 'Micro: OFF';
+  btn.classList.toggle('micro-on', microMode);
+  if (!microMode) {
+    microPhase = null;
+    microIns = null;
+  }
+  updateStepBtnLabel();
+});
 
 // Initial load
 document.getElementById('codeArea').value = EXAMPLES.add;
