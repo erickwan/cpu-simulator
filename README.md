@@ -30,7 +30,7 @@ A complete simulated CPU with:
 
 ### Live demo
 
-If you fork this repo and enable GitHub Pages (Settings → Pages → Deploy from `main` branch), your simulator will be live at `https://<your-username>.github.io/<repo-name>/`.
+**[Try it now → erickwan.github.io/cpu-simulator](https://erickwan.github.io/cpu-simulator/)**
 
 ## The four phases of every instruction
 
